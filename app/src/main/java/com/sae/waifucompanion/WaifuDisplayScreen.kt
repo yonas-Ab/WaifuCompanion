@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.viewinterop.AndroidView
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -32,7 +33,6 @@ fun WaifuDisplayScreen(
 ) {
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
 
-    // Trigger URL Reloads if modified externally
     LaunchedEffect(url, reloadTrigger) {
         webViewInstance?.loadUrl(url)
     }
@@ -40,10 +40,13 @@ fun WaifuDisplayScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .clipToBounds()
             .background(MaterialTheme.colorScheme.background)
     ) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds(),
             factory = { context ->
                 WebView(context).apply {
                     setBackgroundColor(Color.TRANSPARENT)
