@@ -98,7 +98,6 @@ class FloatingWaifuService : Service() {
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun createFloatingView() {
-        // WindowManager Layout Params (Translucent & Interactive)
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -107,8 +106,8 @@ class FloatingWaifuService : Service() {
         }
 
         val params = WindowManager.LayoutParams(
-            600, // Initial overlay width
-            850, // Initial overlay height
+            600,
+            850,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -119,13 +118,11 @@ class FloatingWaifuService : Service() {
             y = 200
         }
 
-        // Parent FrameLayout Container (Transparent background)
         val rootLayout = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
         }
         overlayLayout = rootLayout
 
-        // Secondary Transparent WebView
         webView = WebView(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -157,10 +154,10 @@ class FloatingWaifuService : Service() {
             )
         )
 
-        // Overlay Close Button
         val closeBtn = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setBackgroundColor(Color.argb(120, 0, 0, 0))
+            contentDescription = "Close floating companion"
             setOnClickListener { stopSelf() }
         }
         val btnParams = FrameLayout.LayoutParams(64, 64).apply {
@@ -170,7 +167,41 @@ class FloatingWaifuService : Service() {
         }
         rootLayout.addView(closeBtn, btnParams)
 
-        // Drag to move listener
+        // Drag this corner grip to resize the overlay.
+        val resizeHandle = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_crop)
+            setBackgroundColor(Color.argb(150, 20, 24, 40))
+            contentDescription = "Resize floating companion"
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialWidth = params.width
+                        initialHeight = params.height
+                        resizeStartX = event.rawX
+                        resizeStartY = event.rawY
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val metrics = resources.displayMetrics
+                        params.width = (initialWidth + (event.rawX - resizeStartX).toInt())
+                            .coerceIn(minimumOverlayWidth, metrics.widthPixels)
+                        params.height = (initialHeight + (event.rawY - resizeStartY).toInt())
+                            .coerceIn(minimumOverlayHeight, metrics.heightPixels)
+                        windowManager.updateViewLayout(rootLayout, params)
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                    else -> false
+                }
+            }
+        }
+        val resizeParams = FrameLayout.LayoutParams(56, 56).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            marginEnd = 8
+            bottomMargin = 8
+        }
+        rootLayout.addView(resizeHandle, resizeParams)
+
         rootLayout.setOnTouchListener(object : View.OnTouchListener {
             private var initialX = 0
             private var initialY = 0
@@ -197,17 +228,22 @@ class FloatingWaifuService : Service() {
             }
         })
 
-        // Fetch URL from DataStore and Load
         val repository = SettingsRepository(applicationContext)
         serviceScope.launch {
             val ip = repository.serverIpFlow.first()
             val port = repository.serverPortFlow.first()
-            val url = "http://$ip:$port"
-            webView?.loadUrl(url)
+            webView?.loadUrl("http://$ip:$port")
         }
 
         windowManager.addView(rootLayout, params)
     }
+
+    private var initialWidth = 0
+    private var initialHeight = 0
+    private var resizeStartX = 0f
+    private var resizeStartY = 0f
+    private val minimumOverlayWidth: Int get() = (220 * resources.displayMetrics.density).toInt()
+    private val minimumOverlayHeight: Int get() = (280 * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
         super.onDestroy()
