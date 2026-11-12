@@ -6,6 +6,7 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -104,6 +106,9 @@ fun MainAppScaffold(
     )
 
     Scaffold(
+        // Keep system-bar insets handled by Scaffold while reserving additional
+        // room for the remote page's fixed-bottom controls inside its WebView.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
                 navItems.forEach { item ->
@@ -125,12 +130,15 @@ fun MainAppScaffold(
             }
         }
     ) { innerPadding ->
-        // Use Scaffold's actual content insets and clip AndroidView output to the
-        // remaining area so page content cannot draw over the bottom navigation.
+        val companionBottomReserve = if (currentRoute == NavigationItem.Waifu.route) 88.dp else 0.dp
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                // The hosted site positions its action row at the bottom of its
+                // viewport. Shrink the WebView viewport by a little more than the
+                // app bar so those controls remain visible above navigation.
+                .padding(bottom = companionBottomReserve)
                 .clipToBounds()
         ) {
             NavHost(
