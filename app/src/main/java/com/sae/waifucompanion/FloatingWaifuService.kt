@@ -33,13 +33,21 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 class FloatingWaifuService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var windowManager: WindowManager
-    private var overlayLayout: FrameLayout? = null
+    private var rootView: FrameLayout? = null
     private var webView: WebView? = null
+    private var params: WindowManager.LayoutParams? = null
+    private var header: LinearLayout? = null
+    private var resizeHandle: ImageButton? = null
+    private var restoreButton: ImageButton? = null
+    private var normalWidth = 0
+    private var normalHeight = 0
+    private var isMinimized = false
 
     companion object {
         const val ACTION_STOP_OVERLAY = "com.sae.waifucompanion.STOP_OVERLAY"
@@ -104,22 +112,24 @@ class FloatingWaifuService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
         val metrics = resources.displayMetrics
-        val params = WindowManager.LayoutParams(
-            (metrics.widthPixels * 0.82f).toInt(),
-            (metrics.heightPixels * 0.68f).toInt(),
+        val windowParams = WindowManager.LayoutParams(
+            (metrics.widthPixels * 0.78f).toInt().coerceAtMost(metrics.widthPixels),
+            (metrics.heightPixels * 0.64f).toInt().coerceAtMost(metrics.heightPixels),
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = dp(24)
-            y = dp(100)
+            y = dp(80)
         }
+        params = windowParams
+        normalWidth = windowParams.width
+        normalHeight = windowParams.height
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.TRANSPARENT) }
-        overlayLayout = root
-
-        val avatarWebView = WebView(this).apply {
+        val root = FrameLayout(this)
+        rootView = root
+        val web = WebView(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             settings.apply {
@@ -142,53 +152,54 @@ class FloatingWaifuService : Service() {
                 }
             }
         }
-        webView = avatarWebView
-        root.addView(avatarWebView, FrameLayout.LayoutParams(
+        webView = web
+        root.addView(web, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        val header = LinearLayout(this).apply {
+        val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.argb(190, 20, 24, 40))
+            setBackgroundColor(Color.argb(220, 20, 24, 40))
         }
-        val dragHandle = TextView(this).apply {
+        val moveHandle = TextView(this).apply {
             text = "⠿  Move"
             textSize = 14f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             contentDescription = "Drag to move floating companion"
         }
-        header.addView(dragHandle, LinearLayout.LayoutParams(0, dp(52), 1f))
+        toolbar.addView(moveHandle, LinearLayout.LayoutParams(0, dp(48), 1f))
 
-        val minimizeButton = ImageButton(this).apply {
+        val minimize = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_view)
             setBackgroundColor(Color.TRANSPARENT)
             contentDescription = "Minimize floating companion"
         }
-        header.addView(minimizeButton, LinearLayout.LayoutParams(dp(48), dp(52)))
+        toolbar.addView(minimize, LinearLayout.LayoutParams(dp(48), dp(48)))
 
-        val closeButton = ImageButton(this).apply {
+        val close = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             setBackgroundColor(Color.TRANSPARENT)
             contentDescription = "Close floating companion"
             setOnClickListener { stopSelf() }
         }
-        header.addView(closeButton, LinearLayout.LayoutParams(dp(48), dp(52)))
-        root.addView(header, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, dp(52), Gravity.TOP
+        toolbar.addView(close, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header = toolbar
+        root.addView(toolbar, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(48), Gravity.TOP
         ))
 
-        val resizeHandle = ImageButton(this).apply {
+        val resize = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_crop)
-            setBackgroundColor(Color.argb(180, 20, 24, 40))
+            setBackgroundColor(Color.argb(210, 20, 24, 40))
             contentDescription = "Resize floating companion"
         }
-        root.addView(resizeHandle, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.BOTTOM or Gravity.END))
+        resizeHandle = resize
+        root.addView(resize, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.BOTTOM or Gravity.END))
 
-        val miniButton = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_view)
+        val restore = ImageButton(this).apply {
             contentDescription = "Restore floating companion"
             visibility = View.GONE
             background = GradientDrawable().apply {
@@ -196,115 +207,145 @@ class FloatingWaifuService : Service() {
                 setColor(Color.rgb(38, 48, 82))
                 setStroke(dp(2), Color.WHITE)
             }
-            setOnClickListener {
-                params.width = normalWidth
-                params.height = normalHeight
-                root.background = null
-                avatarWebView.visibility = View.VISIBLE
-                header.visibility = View.VISIBLE
-                resizeHandle.visibility = View.VISIBLE
-                miniButton.visibility = View.GONE
-                windowManager.updateViewLayout(root, params)
-            }
         }
-        root.addView(miniButton, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
+        restoreButton = restore
+        root.addView(restore, FrameLayout.LayoutParams(dp(68), dp(68), Gravity.CENTER))
 
-        var resizeStartWidth = 0
-        var resizeStartHeight = 0
-        var resizeStartX = 0f
-        var resizeStartY = 0f
-        resizeHandle.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    resizeStartWidth = params.width
-                    resizeStartHeight = params.height
-                    resizeStartX = event.rawX
-                    resizeStartY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val screen = resources.displayMetrics
-                    params.width = (resizeStartWidth + (event.rawX - resizeStartX).toInt())
-                        .coerceIn(dp(220), screen.widthPixels)
-                    params.height = (resizeStartHeight + (event.rawY - resizeStartY).toInt())
-                        .coerceIn(dp(280), screen.heightPixels)
-                    windowManager.updateViewLayout(root, params)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
-                else -> false
-            }
-        }
-
-        var dragStartX = 0
-        var dragStartY = 0
-        var touchStartX = 0f
-        var touchStartY = 0f
+        var dragX = 0
+        var dragY = 0
+        var touchX = 0f
+        var touchY = 0f
         val dragListener = View.OnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    dragStartX = params.x
-                    dragStartY = params.y
-                    touchStartX = event.rawX
-                    touchStartY = event.rawY
+                    dragX = windowParams.x
+                    dragY = windowParams.y
+                    touchX = event.rawX
+                    touchY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val screen = resources.displayMetrics
-                    params.x = (dragStartX + (event.rawX - touchStartX).toInt())
-                        .coerceIn(0, (screen.widthPixels - params.width).coerceAtLeast(0))
-                    params.y = (dragStartY + (event.rawY - touchStartY).toInt())
-                        .coerceIn(0, (screen.heightPixels - params.height).coerceAtLeast(0))
-                    windowManager.updateViewLayout(root, params)
+                    windowParams.x = (dragX + (event.rawX - touchX).toInt())
+                        .coerceIn(0, (metrics.widthPixels - windowParams.width).coerceAtLeast(0))
+                    windowParams.y = (dragY + (event.rawY - touchY).toInt())
+                        .coerceIn(0, (metrics.heightPixels - windowParams.height).coerceAtLeast(0))
+                    windowManager.updateViewLayout(root, windowParams)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
                 else -> false
             }
         }
-        dragHandle.setOnTouchListener(dragListener)
-        miniButton.setOnTouchListener { view, event ->
-            if (event.action == MotionEvent.ACTION_MOVE &&
-                (kotlin.math.abs(event.rawX - touchStartX) > dp(8) || kotlin.math.abs(event.rawY - touchStartY) > dp(8))) {
-                dragListener.onTouch(view, event)
-            } else if (event.action == MotionEvent.ACTION_DOWN) {
-                dragListener.onTouch(view, event)
-            } else if (event.action == MotionEvent.ACTION_UP) {
-                val moved = kotlin.math.abs(event.rawX - touchStartX) > dp(8) ||
-                        kotlin.math.abs(event.rawY - touchStartY) > dp(8)
-                if (!moved) miniButton.performClick()
-                true
-            } else {
-                dragListener.onTouch(view, event)
+        moveHandle.setOnTouchListener(dragListener)
+
+        var startWidth = 0
+        var startHeight = 0
+        var startX = 0f
+        var startY = 0f
+        resize.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startWidth = windowParams.width
+                    startHeight = windowParams.height
+                    startX = event.rawX
+                    startY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    windowParams.width = (startWidth + (event.rawX - startX).toInt())
+                        .coerceIn(dp(220), metrics.widthPixels)
+                    windowParams.height = (startHeight + (event.rawY - startY).toInt())
+                        .coerceIn(dp(280), metrics.heightPixels)
+                    windowManager.updateViewLayout(root, windowParams)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    normalWidth = windowParams.width
+                    normalHeight = windowParams.height
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> true
+                else -> false
             }
         }
 
-        var normalWidth = params.width
-        var normalHeight = params.height
-        minimizeButton.setOnClickListener {
-            normalWidth = params.width
-            normalHeight = params.height
-            avatarWebView.visibility = View.GONE
-            header.visibility = View.GONE
-            resizeHandle.visibility = View.GONE
-            miniButton.visibility = View.VISIBLE
-            root.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(38, 48, 82))
-                setStroke(dp(2), Color.WHITE)
+        minimize.setOnClickListener {
+            normalWidth = windowParams.width
+            normalHeight = windowParams.height
+            isMinimized = true
+            web.visibility = View.GONE
+            toolbar.visibility = View.GONE
+            resize.visibility = View.GONE
+            restore.visibility = View.VISIBLE
+            windowParams.width = dp(68)
+            windowParams.height = dp(68)
+            root.background = circleBackground()
+            windowManager.updateViewLayout(root, windowParams)
+        }
+
+        // The minimized bubble can be dragged; a tap restores the full window.
+        var miniDownX = 0f
+        var miniDownY = 0f
+        var miniWindowX = 0
+        var miniWindowY = 0
+        var miniMoved = false
+        restore.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    miniDownX = event.rawX
+                    miniDownY = event.rawY
+                    miniWindowX = windowParams.x
+                    miniWindowY = windowParams.y
+                    miniMoved = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - miniDownX).toInt()
+                    val dy = (event.rawY - miniDownY).toInt()
+                    if (abs(dx) > dp(6) || abs(dy) > dp(6)) miniMoved = true
+                    if (miniMoved) {
+                        windowParams.x = (miniWindowX + dx).coerceIn(0, (metrics.widthPixels - windowParams.width).coerceAtLeast(0))
+                        windowParams.y = (miniWindowY + dy).coerceIn(0, (metrics.heightPixels - windowParams.height).coerceAtLeast(0))
+                        windowManager.updateViewLayout(root, windowParams)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!miniMoved && isMinimized) restoreFloatingView()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> true
+                else -> false
             }
-            params.width = dp(68)
-            params.height = dp(68)
-            windowManager.updateViewLayout(root, params)
         }
 
         val repository = SettingsRepository(applicationContext)
         serviceScope.launch {
             val ip = repository.serverIpFlow.first()
             val port = repository.serverPortFlow.first()
-            avatarWebView.loadUrl("http://$ip:$port")
+            web.loadUrl("http://$ip:$port")
         }
-        windowManager.addView(root, params)
+        windowManager.addView(root, windowParams)
+    }
+
+    private fun restoreFloatingView() {
+        val root = rootView ?: return
+        val windowParams = params ?: return
+        isMinimized = false
+        root.background = null
+        webView?.visibility = View.VISIBLE
+        header?.visibility = View.VISIBLE
+        resizeHandle?.visibility = View.VISIBLE
+        restoreButton?.visibility = View.GONE
+        windowParams.width = normalWidth
+        windowParams.height = normalHeight
+        windowManager.updateViewLayout(root, windowParams)
+    }
+
+    private fun circleBackground() = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.rgb(38, 48, 82))
+        setStroke(dp(2), Color.WHITE)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -312,9 +353,10 @@ class FloatingWaifuService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        overlayLayout?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
+        rootView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         webView?.destroy()
         webView = null
-        overlayLayout = null
+        rootView = null
+        params = null
     }
 }
