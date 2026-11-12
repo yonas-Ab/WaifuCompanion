@@ -5,6 +5,9 @@ import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -26,9 +29,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -50,7 +54,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsRepository = SettingsRepository(applicationContext)
-        
+
         setContent {
             val isDarkTheme by settingsRepository.isDarkThemeFlow.collectAsState(initial = true)
             val keepScreenOn by settingsRepository.keepScreenOnFlow.collectAsState(initial = false)
@@ -78,7 +82,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-} // <-- CRITICAL FIX: Added this missing closing brace for the class
+}
 
 @Composable
 fun MainAppScaffold(
@@ -102,6 +106,7 @@ fun MainAppScaffold(
     )
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
                 navItems.forEach { item ->
@@ -123,32 +128,45 @@ fun MainAppScaffold(
             }
         }
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = NavigationItem.Waifu.route,
-            modifier = Modifier.padding(innerPadding)
+        // Clip the whole navigation host to the area above the bottom bar. This
+        // prevents WebView content (including fixed-position page elements) from
+        // drawing over the app's navigation controls.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .clipToBounds()
         ) {
-            composable(NavigationItem.Waifu.route) {
-                WaifuDisplayScreen(
-                    url = currentTargetUrl,
-                    reloadTrigger = reloadTrigger,
-                    onWebViewCreated = onAttachWebView
-                )
-            }
-            composable(NavigationItem.Connection.route) {
-                ConnectionSettingsScreen(
-                    repository = repository,
-                    currentWebView = currentWebView,
-                    onReloadRequested = {
-                        reloadTrigger = System.currentTimeMillis()
-                    }
-                )
-            }
-            composable(NavigationItem.Console.route) {
-                WebConsoleLogScreen()
-            }
-            composable(NavigationItem.Advanced.route) {
-                AdvancedSettingsScreen(repository = repository)
+            NavHost(
+                navController = navController,
+                startDestination = NavigationItem.Waifu.route,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+            ) {
+                composable(NavigationItem.Waifu.route) {
+                    WaifuDisplayScreen(
+                        url = currentTargetUrl,
+                        reloadTrigger = reloadTrigger,
+                        onWebViewCreated = onAttachWebView
+                    )
+                }
+                composable(NavigationItem.Connection.route) {
+                    ConnectionSettingsScreen(
+                        repository = repository,
+                        currentWebView = currentWebView,
+                        onReloadRequested = {
+                            reloadTrigger = System.currentTimeMillis()
+                        }
+                    )
+                }
+                composable(NavigationItem.Console.route) {
+                    WebConsoleLogScreen()
+                }
+                composable(NavigationItem.Advanced.route) {
+                    AdvancedSettingsScreen(repository = repository)
+                }
             }
         }
     }

@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -23,6 +24,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,8 +63,7 @@ class FloatingWaifuService : Service() {
                 "Sae Waifu Overlay Service",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
         val stopIntent = Intent(this, FloatingWaifuService::class.java).apply {
@@ -71,11 +73,8 @@ class FloatingWaifuService : Service() {
             this, 0, stopIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
-        val mainActivityIntent = Intent(this, MainActivity::class.java)
         val activityPendingIntent = PendingIntent.getActivity(
-            this, 0, mainActivityIntent,
-            PendingIntent.FLAG_IMMUTABLE
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
@@ -104,26 +103,23 @@ class FloatingWaifuService : Service() {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
-
+        val metrics = resources.displayMetrics
         val params = WindowManager.LayoutParams(
-            600,
-            850,
+            (metrics.widthPixels * 0.82f).toInt(),
+            (metrics.heightPixels * 0.68f).toInt(),
             layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 100
-            y = 200
+            x = dp(24)
+            y = dp(100)
         }
 
-        val rootLayout = FrameLayout(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-        }
-        overlayLayout = rootLayout
+        val root = FrameLayout(this).apply { setBackgroundColor(Color.TRANSPARENT) }
+        overlayLayout = root
 
-        webView = WebView(this).apply {
+        val avatarWebView = WebView(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             settings.apply {
@@ -136,9 +132,9 @@ class FloatingWaifuService : Service() {
             webViewClient = WebViewClient()
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest?) {
-                    request?.resources?.forEach { res ->
-                        if (res == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
-                            request.grant(arrayOf(res))
+                    request?.resources?.forEach { resource ->
+                        if (resource == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
+                            request.grant(arrayOf(resource))
                             return
                         }
                     }
@@ -146,113 +142,177 @@ class FloatingWaifuService : Service() {
                 }
             }
         }
-        rootLayout.addView(
-            webView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        webView = avatarWebView
+        root.addView(avatarWebView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
-        val closeBtn = ImageButton(this).apply {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.argb(190, 20, 24, 40))
+        }
+        val dragHandle = TextView(this).apply {
+            text = "⠿  Move"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "Drag to move floating companion"
+        }
+        header.addView(dragHandle, LinearLayout.LayoutParams(0, dp(52), 1f))
+
+        val minimizeButton = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_view)
+            setBackgroundColor(Color.TRANSPARENT)
+            contentDescription = "Minimize floating companion"
+        }
+        header.addView(minimizeButton, LinearLayout.LayoutParams(dp(48), dp(52)))
+
+        val closeButton = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            setBackgroundColor(Color.argb(120, 0, 0, 0))
+            setBackgroundColor(Color.TRANSPARENT)
             contentDescription = "Close floating companion"
             setOnClickListener { stopSelf() }
         }
-        val btnParams = FrameLayout.LayoutParams(64, 64).apply {
-            gravity = Gravity.TOP or Gravity.END
-            marginEnd = 8
-            topMargin = 8
-        }
-        rootLayout.addView(closeBtn, btnParams)
+        header.addView(closeButton, LinearLayout.LayoutParams(dp(48), dp(52)))
+        root.addView(header, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, dp(52), Gravity.TOP
+        ))
 
-        // Drag this corner grip to resize the overlay.
         val resizeHandle = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_crop)
-            setBackgroundColor(Color.argb(150, 20, 24, 40))
+            setBackgroundColor(Color.argb(180, 20, 24, 40))
             contentDescription = "Resize floating companion"
-            setOnTouchListener { _, event ->
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialWidth = params.width
-                        initialHeight = params.height
-                        resizeStartX = event.rawX
-                        resizeStartY = event.rawY
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val metrics = resources.displayMetrics
-                        params.width = (initialWidth + (event.rawX - resizeStartX).toInt())
-                            .coerceIn(minimumOverlayWidth, metrics.widthPixels)
-                        params.height = (initialHeight + (event.rawY - resizeStartY).toInt())
-                            .coerceIn(minimumOverlayHeight, metrics.heightPixels)
-                        windowManager.updateViewLayout(rootLayout, params)
-                        true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
-                    else -> false
-                }
+        }
+        root.addView(resizeHandle, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.BOTTOM or Gravity.END))
+
+        val miniButton = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_view)
+            contentDescription = "Restore floating companion"
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(38, 48, 82))
+                setStroke(dp(2), Color.WHITE)
+            }
+            setOnClickListener {
+                params.width = normalWidth
+                params.height = normalHeight
+                root.background = null
+                avatarWebView.visibility = View.VISIBLE
+                header.visibility = View.VISIBLE
+                resizeHandle.visibility = View.VISIBLE
+                miniButton.visibility = View.GONE
+                windowManager.updateViewLayout(root, params)
             }
         }
-        val resizeParams = FrameLayout.LayoutParams(56, 56).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            marginEnd = 8
-            bottomMargin = 8
-        }
-        rootLayout.addView(resizeHandle, resizeParams)
+        root.addView(miniButton, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
 
-        rootLayout.setOnTouchListener(object : View.OnTouchListener {
-            private var initialX = 0
-            private var initialY = 0
-            private var initialTouchX = 0f
-            private var initialTouchY = 0f
-
-            override fun onTouch(v: View?, event: MotionEvent): Boolean {
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = params.x
-                        initialY = params.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        params.x = initialX + (event.rawX - initialTouchX).toInt()
-                        params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(rootLayout, params)
-                        return true
-                    }
+        var resizeStartWidth = 0
+        var resizeStartHeight = 0
+        var resizeStartX = 0f
+        var resizeStartY = 0f
+        resizeHandle.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    resizeStartWidth = params.width
+                    resizeStartHeight = params.height
+                    resizeStartX = event.rawX
+                    resizeStartY = event.rawY
+                    true
                 }
-                return false
+                MotionEvent.ACTION_MOVE -> {
+                    val screen = resources.displayMetrics
+                    params.width = (resizeStartWidth + (event.rawX - resizeStartX).toInt())
+                        .coerceIn(dp(220), screen.widthPixels)
+                    params.height = (resizeStartHeight + (event.rawY - resizeStartY).toInt())
+                        .coerceIn(dp(280), screen.heightPixels)
+                    windowManager.updateViewLayout(root, params)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                else -> false
             }
-        })
+        }
+
+        var dragStartX = 0
+        var dragStartY = 0
+        var touchStartX = 0f
+        var touchStartY = 0f
+        val dragListener = View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartX = params.x
+                    dragStartY = params.y
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val screen = resources.displayMetrics
+                    params.x = (dragStartX + (event.rawX - touchStartX).toInt())
+                        .coerceIn(0, (screen.widthPixels - params.width).coerceAtLeast(0))
+                    params.y = (dragStartY + (event.rawY - touchStartY).toInt())
+                        .coerceIn(0, (screen.heightPixels - params.height).coerceAtLeast(0))
+                    windowManager.updateViewLayout(root, params)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                else -> false
+            }
+        }
+        dragHandle.setOnTouchListener(dragListener)
+        miniButton.setOnTouchListener { view, event ->
+            if (event.action == MotionEvent.ACTION_MOVE &&
+                (kotlin.math.abs(event.rawX - touchStartX) > dp(8) || kotlin.math.abs(event.rawY - touchStartY) > dp(8))) {
+                dragListener.onTouch(view, event)
+            } else if (event.action == MotionEvent.ACTION_DOWN) {
+                dragListener.onTouch(view, event)
+            } else if (event.action == MotionEvent.ACTION_UP) {
+                val moved = kotlin.math.abs(event.rawX - touchStartX) > dp(8) ||
+                        kotlin.math.abs(event.rawY - touchStartY) > dp(8)
+                if (!moved) miniButton.performClick()
+                true
+            } else {
+                dragListener.onTouch(view, event)
+            }
+        }
+
+        var normalWidth = params.width
+        var normalHeight = params.height
+        minimizeButton.setOnClickListener {
+            normalWidth = params.width
+            normalHeight = params.height
+            avatarWebView.visibility = View.GONE
+            header.visibility = View.GONE
+            resizeHandle.visibility = View.GONE
+            miniButton.visibility = View.VISIBLE
+            root.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(38, 48, 82))
+                setStroke(dp(2), Color.WHITE)
+            }
+            params.width = dp(68)
+            params.height = dp(68)
+            windowManager.updateViewLayout(root, params)
+        }
 
         val repository = SettingsRepository(applicationContext)
         serviceScope.launch {
             val ip = repository.serverIpFlow.first()
             val port = repository.serverPortFlow.first()
-            webView?.loadUrl("http://$ip:$port")
+            avatarWebView.loadUrl("http://$ip:$port")
         }
-
-        windowManager.addView(rootLayout, params)
+        windowManager.addView(root, params)
     }
 
-    private var initialWidth = 0
-    private var initialHeight = 0
-    private var resizeStartX = 0f
-    private var resizeStartY = 0f
-    private val minimumOverlayWidth: Int get() = (220 * resources.displayMetrics.density).toInt()
-    private val minimumOverlayHeight: Int get() = (280 * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
-        overlayLayout?.let {
-            if (it.isAttachedToWindow) {
-                windowManager.removeView(it)
-            }
-        }
+        overlayLayout?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         webView?.destroy()
         webView = null
         overlayLayout = null
