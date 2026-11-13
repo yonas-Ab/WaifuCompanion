@@ -12,21 +12,17 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.unit.dp
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -36,7 +32,6 @@ fun WaifuDisplayScreen(
     onWebViewCreated: (WebView) -> Unit = {}
 ) {
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
-    var webProgress by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(url, reloadTrigger) {
         webViewInstance?.loadUrl(url)
@@ -78,10 +73,6 @@ fun WaifuDisplayScreen(
                             }
                         }
 
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            webProgress = newProgress
-                        }
-
                         override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                             consoleMessage?.let {
                                 val level = when (it.messageLevel()) {
@@ -105,15 +96,6 @@ fun WaifuDisplayScreen(
                 }
             }
         )
-
-        if (webProgress in 1..99) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(webProgress / 100f)
-                    .height(3.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-        }
     }
 
     DisposableEffect(Unit) {

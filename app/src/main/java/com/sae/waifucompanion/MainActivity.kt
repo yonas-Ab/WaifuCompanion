@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -125,12 +126,16 @@ fun MainAppScaffold(
             }
         }
     ) { innerPadding ->
-        // Use Scaffold's actual content insets and clip AndroidView output to the
-        // remaining area so page content cannot draw over the bottom navigation.
+        // The remote companion page places its action dock at the bottom of its
+        // viewport. Scaffold already reserves the app navigation bar; reserve a
+        // little additional space on this route so the dock remains above it on
+        // devices where WebView's viewport sizing differs from the browser.
+        val companionReserve = if (currentRoute == NavigationItem.Waifu.route) 96.dp else 0.dp
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .padding(bottom = companionReserve)
                 .clipToBounds()
         ) {
             NavHost(
